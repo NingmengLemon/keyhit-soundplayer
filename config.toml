@@ -13,6 +13,8 @@ volume = 1.0
 # true: 后一个音效打断前一个未完成播放；false: 尽量叠放播放。
 interrupt = true
 channel_count = 8
+# round_robin: 按顺序轮播；random: 每次随机挑选。
+rotation = "round_robin"
 
 [listener]
 keyboard = true
@@ -24,21 +26,33 @@ trigger_on_release = false
 
 # 简单全局映射：所有未单独配置的键都播放这个音效。
 [default]
-sound = "resources/cn_025.wav"
-interrupt = true
+# sound = "resources/cn_025.wav"
+# interrupt = true
+sounds = [
+    "resources/cn_025.wav",
+    "resources/cn_026.wav",
+    "resources/cn_027.wav",
+    "resources/cn_028.wav",
+]
+rotation = "random"
 
 # 按键组映射：适合把某类键一键绑定到同一个音效。
-[groups]
-"group:letters" = { sounds = ["resources/cn_025.wav", "resources/cn_026.wav"] }
-"group:digits" = "resources/cn_027.wav"
-"group:special" = "resources/cn_028.wav"
-"group:mouse_buttons" = "resources/cn_025.wav"
+# [groups]
+# "group:letters" = { sounds = [
+#     "resources/cn_025.wav",
+#     "resources/cn_026.wav",
+#     "resources/cn_027.wav",
+#     "resources/cn_028.wav",
+# ], rotation = "random" }
+# "group:digits" = "resources/cn_027.wav"
+# "group:special" = "resources/cn_028.wav"
+# "group:mouse_buttons" = "resources/cn_025.wav"
 # "group:mouse_wheel" = "resources/cn_026.wav"
 # "group:face" = "resources/cn_025.wav"
 # "group:dpad" = "resources/cn_026.wav"
 
 # 精确映射：会覆盖同名按键组映射。
-[bindings]
+# [bindings]
 # space = { sounds = [
 #     "resources/cn_025.wav",
 #     "resources/cn_026.wav",

@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .logging_config import get_logger
 
 logger = get_logger("config")
 
 InterruptMode = Literal["always", "never"]
+RotationMode = Literal["round_robin", "random"]
 
 _SPECIAL_ALIASES: dict[str, str] = {
     "esc": "escape",
@@ -127,44 +137,108 @@ _MOUSE_GROUPS: dict[str, list[str]] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class AudioConfig:
+class ConfigModel(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+
+class AudioConfig(ConfigModel):
     frequency: int = 44_100
     size: int = -16
     channels: int = 2
     buffer: int = 128
-    volume: float = 1.0
+    volume: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
-@dataclass(frozen=True, slots=True)
-class PlaybackConfig:
+class PlaybackConfig(ConfigModel):
     interrupt: bool = True
-    channel_count: int = 8
+    channel_count: int = Field(default=8, ge=1)
+    rotation: RotationMode = "round_robin"
 
 
-@dataclass(frozen=True, slots=True)
-class ListenerConfig:
+class ListenerConfig(ConfigModel):
     keyboard: bool = True
     mouse: bool = True
     gamepad: bool = True
-    gamepad_poll_interval: float = 0.001
+    gamepad_poll_interval: float = Field(default=0.001, gt=0.0)
     trigger_on_release: bool = False
 
 
-@dataclass(frozen=True, slots=True)
-class Binding:
+class Binding(ConfigModel):
     sounds: tuple[Path, ...]
     interrupt: bool | None = None
+    rotation: RotationMode | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_binding(cls, value: Any) -> dict[str, Any]:
+        if isinstance(value, (str, Path)):
+            return {"sounds": (value,)}
+        if isinstance(value, list):
+            return {"sounds": value}
+        if not isinstance(value, dict):
+            raise ValueError("绑定值必须是字符串、字符串数组或表")
+        if "sounds" not in value and "sound" in value:
+            return {**value, "sounds": value["sound"]}
+        return value
+
+    @field_validator("sounds", mode="before")
+    @classmethod
+    def normalize_sounds(cls, value: Any) -> Any:
+        if isinstance(value, (str, Path)):
+            return (value,)
+        return value
+
+    @field_validator("sounds")
+    @classmethod
+    def require_sounds(cls, value: tuple[Path, ...]) -> tuple[Path, ...]:
+        if not value:
+            raise ValueError("绑定至少需要一个音效")
+        return value
+
+    def resolve(self, base_dir: Path) -> Binding:
+        return self.model_copy(
+            update={
+                "sounds": tuple(
+                    resolve_sound_path(path, base_dir) for path in self.sounds
+                )
+            }
+        )
 
 
-@dataclass(frozen=True, slots=True)
-class AppConfig:
+class RawConfig(ConfigModel):
+    audio: AudioConfig = Field(default_factory=AudioConfig)
+    playback: PlaybackConfig = Field(default_factory=PlaybackConfig)
+    listener: ListenerConfig = Field(default_factory=ListenerConfig)
+    default: Binding | None = None
+    groups: dict[str, Binding] = Field(default_factory=dict)
+    bindings: dict[str, Binding] = Field(default_factory=dict)
+
+
+class AppConfig(ConfigModel):
     base_dir: Path
-    audio: AudioConfig = field(default_factory=AudioConfig)
-    playback: PlaybackConfig = field(default_factory=PlaybackConfig)
-    listener: ListenerConfig = field(default_factory=ListenerConfig)
-    bindings: dict[str, Binding] = field(default_factory=dict)
+    audio: AudioConfig = Field(default_factory=AudioConfig)
+    playback: PlaybackConfig = Field(default_factory=PlaybackConfig)
+    listener: ListenerConfig = Field(default_factory=ListenerConfig)
+    bindings: dict[str, Binding] = Field(default_factory=dict)
     default_binding: Binding | None = None
+
+
+class RuntimeSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="KEYHIT_",
+        env_nested_delimiter="__",
+        extra="ignore",
+        frozen=True,
+    )
+
+    config: Path = Path("config.toml")
+    log_level: str = "INFO"
+    verbose: bool = False
+    quiet: bool = False
+
+
+class ConfigError(ValueError):
+    """Raised when user supplied configuration is invalid."""
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -186,34 +260,35 @@ def load_config(path: str | Path) -> AppConfig:
 
 def parse_config(raw: dict[str, Any], base_dir: Path) -> AppConfig:
     logger.debug("解析配置: base_dir=%s", base_dir)
-    audio = _parse_dataclass(AudioConfig, raw.get("audio", {}))
-    playback = _parse_dataclass(PlaybackConfig, raw.get("playback", {}))
-    listener = _parse_dataclass(ListenerConfig, raw.get("listener", {}))
+    try:
+        parsed = RawConfig.model_validate(raw)
+    except ValidationError as exc:
+        logger.error("配置校验失败: %s", exc)
+        raise ConfigError(str(exc)) from exc
 
-    default_binding = _parse_optional_binding(raw.get("default"), base_dir)
     bindings: dict[str, Binding] = {}
+    for section_name, items in (
+        ("组映射", parsed.groups),
+        ("精确映射", parsed.bindings),
+    ):
+        for selector, binding in items.items():
+            expanded = expand_key_selector(selector)
+            resolved = binding.resolve(base_dir)
+            logger.debug("展开%s: %s -> %s", section_name, selector, expanded)
+            for normalized in expanded:
+                bindings[normalized] = resolved
 
-    for group_name, value in raw.get("groups", {}).items():
-        binding = _parse_binding(value, base_dir)
-        expanded = expand_key_selector(group_name)
-        logger.debug("展开组映射: %s -> %s", group_name, expanded)
-        for normalized in expanded:
-            bindings[normalized] = binding
-
-    for key_name, value in raw.get("bindings", {}).items():
-        binding = _parse_binding(value, base_dir)
-        expanded = expand_key_selector(key_name)
-        logger.debug("展开精确映射: %s -> %s", key_name, expanded)
-        for normalized in expanded:
-            bindings[normalized] = binding
-
-    return AppConfig(
-        base_dir=base_dir,
-        audio=audio,
-        playback=playback,
-        listener=listener,
-        bindings=bindings,
-        default_binding=default_binding,
+    return AppConfig.model_validate(
+        {
+            "base_dir": base_dir,
+            "audio": parsed.audio,
+            "playback": parsed.playback,
+            "listener": parsed.listener,
+            "bindings": bindings,
+            "default_binding": parsed.default.resolve(base_dir)
+            if parsed.default is not None
+            else None,
+        }
     )
 
 
@@ -269,64 +344,3 @@ def resolve_sound_path(path: str | Path, base_dir: Path) -> Path:
     if not sound_path.is_absolute():
         sound_path = (base_dir / sound_path).resolve()
     return sound_path
-
-
-def _parse_dataclass(
-    cls: type[AudioConfig] | type[PlaybackConfig] | type[ListenerConfig], value: Any
-) -> Any:
-    if value is None:
-        logger.debug("%s 使用默认配置", cls.__name__)
-        return cls()
-    if not isinstance(value, dict):
-        logger.error("%s 配置类型错误: %r", cls.__name__, value)
-        raise TypeError(f"{cls.__name__} 必须是表")
-    allowed = set(cls.__dataclass_fields__)  # type: ignore[attr-defined]
-    filtered = {key: item for key, item in value.items() if key in allowed}
-    ignored = sorted(set(value) - allowed)
-    if ignored:
-        logger.warning("忽略未知 %s 配置项: %s", cls.__name__, ", ".join(ignored))
-    logger.debug("%s 配置: %s", cls.__name__, filtered)
-    return cls(**filtered)
-
-
-def _parse_optional_binding(value: Any, base_dir: Path) -> Binding | None:
-    if value is None:
-        logger.debug("未配置默认绑定")
-        return None
-    return _parse_binding(value, base_dir)
-
-
-def _parse_binding(value: Any, base_dir: Path) -> Binding:
-    if isinstance(value, str):
-        binding = Binding(sounds=(resolve_sound_path(value, base_dir),))
-        logger.debug("解析单音效绑定: %s", binding.sounds[0])
-        return binding
-    if isinstance(value, list):
-        binding = Binding(
-            sounds=tuple(resolve_sound_path(item, base_dir) for item in value)
-        )
-        logger.debug("解析多音效绑定: %s", binding.sounds)
-        return binding
-    if not isinstance(value, dict):
-        logger.error("绑定值类型错误: %r", value)
-        raise TypeError("绑定值必须是字符串、字符串数组或表")
-
-    sounds_value = value.get("sounds", value.get("sound"))
-    if isinstance(sounds_value, str):
-        sounds = (resolve_sound_path(sounds_value, base_dir),)
-    elif isinstance(sounds_value, list):
-        sounds = tuple(resolve_sound_path(item, base_dir) for item in sounds_value)
-    else:
-        logger.error("绑定表缺少 sound/sounds: %r", value)
-        raise TypeError("绑定表需要 sound 或 sounds")
-
-    if not sounds:
-        logger.error("绑定音效列表为空: %r", value)
-        raise ValueError("绑定至少需要一个音效")
-    interrupt_value = value.get("interrupt")
-    if interrupt_value is not None and not isinstance(interrupt_value, bool):
-        logger.error("绑定 interrupt 类型错误: %r", interrupt_value)
-        raise TypeError("interrupt 必须是布尔值")
-    binding = Binding(sounds=sounds, interrupt=interrupt_value)
-    logger.debug("解析绑定表: sounds=%s interrupt=%s", sounds, interrupt_value)
-    return binding

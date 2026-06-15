@@ -1,24 +1,52 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from queue import SimpleQueue
 from threading import Event
+from typing import Annotated
 
-from .config import AppConfig, load_config
+import typer
+
+from .config import AppConfig, RuntimeSettings, load_config
 from .listeners import GamepadListener, KeyboardListener, MouseListener
 from .logging_config import configure_logging, get_logger
 from .player import SoundPlayer
 
 logger = get_logger("cli")
 
+typer_app = typer.Typer(
+    add_completion=False,
+    help="Global key hit sound player",
+    no_args_is_help=False,
+)
 
-@dataclass(frozen=True, slots=True)
-class RuntimeArgs:
-    config: Path
-    log_level: str
-    verbose: bool
-    quiet: bool
+LogLevel = Annotated[
+    str,
+    typer.Option(
+        "--log-level",
+        help="日志级别，默认 INFO",
+        case_sensitive=False,
+    ),
+]
+
+ConfigPath = Annotated[
+    Path,
+    typer.Option(
+        "--config",
+        "-c",
+        help="配置文件路径，默认当前目录下的 config.toml，也可用 KEYHIT_CONFIG 覆盖",
+    ),
+]
+
+VerboseFlag = Annotated[
+    bool,
+    typer.Option("--verbose", "-v", help="启用 DEBUG 日志"),
+]
+
+QuietFlag = Annotated[
+    bool,
+    typer.Option("--quiet", "-q", help="仅输出 WARNING 及以上日志"),
+]
 
 
 class App:
@@ -85,49 +113,28 @@ class App:
         self._events.put(event_name)
 
 
-def parse_args(argv: list[str] | None = None) -> RuntimeArgs:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Global key hit sound player")
-    parser.add_argument(
-        "-c",
-        "--config",
-        type=Path,
-        default=Path("config.toml"),
-        help="配置文件路径，默认当前目录下的 config.toml",
+@typer_app.command()
+def run(
+    config: ConfigPath = Path("config.toml"),
+    log_level: LogLevel = "INFO",
+    verbose: VerboseFlag = False,
+    quiet: QuietFlag = False,
+) -> None:
+    settings = RuntimeSettings(
+        config=config,
+        log_level=log_level,
+        verbose=verbose,
+        quiet=quiet,
     )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
-        help="日志级别，默认 INFO",
+    configure_logging(
+        settings.log_level, verbose=settings.verbose, quiet=settings.quiet
     )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="启用 DEBUG 日志",
-    )
-    parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="仅输出 WARNING 及以上日志",
-    )
-    args = parser.parse_args(argv)
-    return RuntimeArgs(
-        config=args.config,
-        log_level=args.log_level,
-        verbose=args.verbose,
-        quiet=args.quiet,
-    )
+    logger.debug("运行配置: %s", settings)
+    loaded_config = load_config(settings.config)
+    app = App(loaded_config)
+    app.run()
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    configure_logging(args.log_level, verbose=args.verbose, quiet=args.quiet)
-    logger.debug("命令行参数: %s", args)
-    config = load_config(args.config)
-    app = App(config)
-    app.run()
+    typer_app(args=argv, prog_name="keyhit-soundplayer")
     return 0

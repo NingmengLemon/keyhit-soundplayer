@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
+from random import choice
 from threading import Lock
 
 import pygame
@@ -86,9 +87,7 @@ class SoundPlayer:
             logger.warning("事件绑定没有音效: event=%s", event_name)
             return
         with self._lock:
-            index = self._round_robin[event_name] % len(binding.sounds)
-            self._round_robin[event_name] += 1
-            sound_path = binding.sounds[index]
+            sound_path = self._choose_sound_path(event_name, binding)
             sound = self._load_sound(sound_path)
             sound.set_volume(self._config.audio.volume)
             should_interrupt = (
@@ -106,6 +105,21 @@ class SoundPlayer:
                 logger.debug("叠放播放音效: event=%s sound=%s", event_name, sound_path)
                 self._current_channel = pygame.mixer.find_channel(force=True)
             self._current_channel.play(sound)
+
+    def _choose_sound_path(self, event_name: str, binding: Binding) -> Path:
+        if len(binding.sounds) == 1:
+            return binding.sounds[0]
+        if binding.rotation == "random" or self._config.playback.rotation == "random":
+            sound_path = choice(binding.sounds)
+            logger.debug("随机选择音效: event=%s sound=%s", event_name, sound_path)
+            return sound_path
+        index = self._round_robin[event_name] % len(binding.sounds)
+        self._round_robin[event_name] += 1
+        sound_path = binding.sounds[index]
+        logger.debug(
+            "轮播选择音效: event=%s index=%s sound=%s", event_name, index, sound_path
+        )
+        return sound_path
 
     def _load_sound(self, path: Path) -> pygame.mixer.Sound:
         resolved = path.resolve()
