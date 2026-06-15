@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from threading import Event, Thread
+from threading import Event, Lock, Thread, Timer
 from typing import Any
 
 from pynput import keyboard, mouse
 
-from .config import normalize_gamepad_name, normalize_key_name, normalize_mouse_name
+from .config import (
+    LongPressConfig,
+    normalize_gamepad_name,
+    normalize_key_name,
+    normalize_mouse_name,
+)
 from .logging_config import get_logger
 
 logger = get_logger("listeners")
@@ -14,24 +19,111 @@ logger = get_logger("listeners")
 EventCallback = Callable[[str], None]
 
 
+class LongPressTracker:
+    def __init__(self, callback: EventCallback, config: LongPressConfig) -> None:
+        self._callback = callback
+        self._config = config
+        self._lock = Lock()
+        self._states: dict[str, Timer | None] = {}
+        logger.debug(
+            "长按跟踪器已创建: enabled=%s threshold=%s interval=%s emit_press=%s suffix=%s",
+            config.enabled,
+            config.threshold,
+            config.interval,
+            config.emit_press,
+            config.event_suffix,
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return self._config.enabled
+
+    def press(self, event_name: str) -> None:
+        if not self._config.enabled:
+            self._callback(event_name)
+            return
+        with self._lock:
+            if event_name in self._states:
+                logger.debug("忽略重复按下事件: %s", event_name)
+                return
+            timer = Timer(self._config.threshold, self._emit_long_press, (event_name,))
+            timer.daemon = True
+            self._states[event_name] = timer
+            timer.start()
+        if self._config.emit_press:
+            self._callback(event_name)
+
+    def release(self, event_name: str) -> None:
+        if not self._config.enabled:
+            return
+        with self._lock:
+            timer = self._states.pop(event_name, None)
+        if timer is not None:
+            timer.cancel()
+            logger.debug("释放事件已取消长按计时: %s", event_name)
+
+    def stop(self) -> None:
+        with self._lock:
+            timers = tuple(
+                timer for timer in self._states.values() if timer is not None
+            )
+            self._states.clear()
+        for timer in timers:
+            timer.cancel()
+
+    def _emit_long_press(self, event_name: str) -> None:
+        long_press_event = f"{event_name}{self._config.event_suffix}"
+        logger.debug("触发长按事件: %s", long_press_event)
+        self._callback(long_press_event)
+        if self._config.interval <= 0:
+            with self._lock:
+                if event_name in self._states:
+                    self._states[event_name] = None
+            return
+        timer = Timer(self._config.interval, self._emit_long_press, (event_name,))
+        timer.daemon = True
+        with self._lock:
+            if event_name not in self._states:
+                timer.cancel()
+                return
+            self._states[event_name] = timer
+            timer.start()
+
+
 class KeyboardListener:
     def __init__(
-        self, callback: EventCallback, *, trigger_on_release: bool = False
+        self,
+        callback: EventCallback,
+        *,
+        trigger_on_release: bool = False,
+        long_press: LongPressConfig | None = None,
     ) -> None:
         self._callback = callback
         self._trigger_on_release = trigger_on_release
+        self._long_press = LongPressTracker(callback, long_press or LongPressConfig())
         self._listener: keyboard.Listener | None = None
-        logger.debug("键盘监听器已创建: trigger_on_release=%s", trigger_on_release)
+        logger.debug(
+            "键盘监听器已创建: trigger_on_release=%s long_press=%s",
+            trigger_on_release,
+            self._long_press.enabled,
+        )
 
     def start(self) -> None:
         logger.info("启动键盘监听器")
-        self._listener = keyboard.Listener(
-            on_press=None if self._trigger_on_release else self._on_key,
-            on_release=self._on_key if self._trigger_on_release else None,
-        )
+        if self._long_press.enabled:
+            self._listener = keyboard.Listener(
+                on_press=self._on_press,
+                on_release=self._on_release,
+            )
+        else:
+            self._listener = keyboard.Listener(
+                on_press=None if self._trigger_on_release else self._on_key,
+                on_release=self._on_key if self._trigger_on_release else None,
+            )
         self._listener.start()
 
     def stop(self) -> None:
+        self._long_press.stop()
         if self._listener is not None:
             logger.info("停止键盘监听器")
             self._listener.stop()
@@ -44,6 +136,24 @@ class KeyboardListener:
         if name:
             logger.debug("键盘事件: %s", name)
             self._callback(name)
+
+    def _on_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
+        if key is None:
+            return
+        name = key_to_name(key)
+        if name:
+            logger.debug("键盘按下事件: %s", name)
+            self._long_press.press(name)
+
+    def _on_release(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
+        if key is None:
+            return
+        name = key_to_name(key)
+        if name:
+            logger.debug("键盘释放事件: %s", name)
+            self._long_press.release(name)
+            if self._trigger_on_release:
+                self._callback(name)
 
 
 def key_to_name(key: keyboard.Key | keyboard.KeyCode) -> str | None:
@@ -69,10 +179,13 @@ def key_to_name(key: keyboard.Key | keyboard.KeyCode) -> str | None:
 class MouseListener:
     """System-wide mouse click and wheel listener."""
 
-    def __init__(self, callback: EventCallback) -> None:
+    def __init__(
+        self, callback: EventCallback, *, long_press: LongPressConfig | None = None
+    ) -> None:
         self._callback = callback
+        self._long_press = LongPressTracker(callback, long_press or LongPressConfig())
         self._listener: mouse.Listener | None = None
-        logger.debug("鼠标监听器已创建")
+        logger.debug("鼠标监听器已创建: long_press=%s", self._long_press.enabled)
 
     def start(self) -> None:
         logger.info("启动鼠标监听器")
@@ -82,17 +195,24 @@ class MouseListener:
         self._listener.start()
 
     def stop(self) -> None:
+        self._long_press.stop()
         if self._listener is not None:
             logger.info("停止鼠标监听器")
             self._listener.stop()
             self._listener = None
 
     def _on_click(self, x: int, y: int, button: Any, pressed: bool) -> None:
-        if not pressed:
-            return
         name = mouse_button_to_name(button)
-        if name:
-            logger.debug("鼠标点击事件: %s x=%s y=%s", name, x, y)
+        if not name:
+            return
+        logger.debug("鼠标点击事件: %s pressed=%s x=%s y=%s", name, pressed, x, y)
+        if self._long_press.enabled:
+            if pressed:
+                self._long_press.press(name)
+            else:
+                self._long_press.release(name)
+            return
+        if pressed:
             self._callback(name)
 
     def _on_scroll(self, x: int, y: int, dx: int, dy: int) -> None:

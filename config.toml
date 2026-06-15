@@ -18,49 +18,99 @@ rotation = "round_robin"
 
 [listener]
 keyboard = true
-mouse = true
-gamepad = true
+mouse = false
+gamepad = false
 # 无手柄或手柄暂时断开时的后台重试间隔，单位秒。
 gamepad_poll_interval = 1.0
+# false: 按下时触发普通事件；true: 释放时触发普通事件。
 trigger_on_release = false
 
-# 简单全局映射：所有未单独配置的键都播放这个音效。
-[default]
-# sound = "resources/cn_025.wav"
-# interrupt = true
-sounds = [
-    "resources/cn_025.wav",
-    "resources/cn_026.wav",
-    "resources/cn_027.wav",
-    "resources/cn_028.wav",
-]
+[listener.long_press]
+# 启用后，键盘按键/鼠标按钮按住超过 threshold 秒会触发 "按键名.long_press" 事件。
+# 手柄和滚轮暂无释放事件，暂不参与长按判定。
+enabled = false
+# 长按判定阈值，单位秒。
+threshold = 0.5
+# 长按成立后重复触发间隔；0 表示只触发一次。
+interval = 0.0
+# true: 按下时仍触发普通按键事件；false: 只触发长按事件或释放事件。
+emit_press = true
+# 长按事件名后缀，例如 space.long_press、mouse.left.long_press。
+event_suffix = ".long_press"
+
+# 有序规则：解析时从上到下维护绑定状态。
+# action = "set"    覆盖 selector 的绑定；selector = "all" 可作为默认绑定。
+# action = "add"    追加音效到已有绑定，最终去重；没有已有绑定时等同 set。
+# action = "clear"  删除 selector 的绑定。
+# action = "remove" clear 的别名。
+
+# 默认绑定：所有未单独配置的键都播放这些音效。
+[[rules]]
+action = "set"
+selector = "all"
+sounds = [{ directory = "resources", glob = "*.wav" }]
 rotation = "random"
 
 # 按键组映射：适合把某类键一键绑定到同一个音效。
-# [groups]
-# "group:letters" = { sounds = [
-#     "resources/cn_025.wav",
-#     "resources/cn_026.wav",
-#     "resources/cn_027.wav",
-#     "resources/cn_028.wav",
-# ], rotation = "random" }
-# "group:digits" = "resources/cn_027.wav"
-# "group:special" = "resources/cn_028.wav"
-# "group:mouse_buttons" = "resources/cn_025.wav"
-# "group:mouse_wheel" = "resources/cn_026.wav"
-# "group:face" = "resources/cn_025.wav"
-# "group:dpad" = "resources/cn_026.wav"
+# [[rules]]
+# action = "set"
+# selector = "group:letters"
+# sounds = [
+#     "resources/025.wav",
+#     "resources/026.wav",
+#     "resources/027.wav",
+#     "resources/028.wav",
+# ]
+# rotation = "random"
+#
+# [[rules]]
+# action = "set"
+# selector = ["group:digits", "group:special"]
+# sound = "resources/027.wav"
 
-# 精确映射：会覆盖同名按键组映射。
-# [bindings]
-# space = { sounds = [
-#     "resources/cn_025.wav",
-#     "resources/cn_026.wav",
-#     "resources/cn_027.wav",
-# ], interrupt = true }
-# enter = "resources/cn_028.wav"
-# "gamepad:BTN_SOUTH" = "resources/cn_025.wav"
-# "gamepad:ABS_HAT0X.-1" = "resources/cn_026.wav"
-# "mouse:left" = { sounds = ["resources/cn_025.wav", "resources/cn_026.wav"] }
-# "mouse:right" = "resources/cn_027.wav"
-# "mouse:wheel_up" = "resources/cn_028.wav"
+# 精确映射：后续规则可覆盖、追加或清空前面规则产生的绑定。
+# [[rules]]
+# action = "set"
+# selector = "space"
+# sounds = [
+#     "resources/025.wav",
+#     "resources/026.wav",
+#     "resources/027.wav",
+# ]
+# interrupt = true
+#
+# [[rules]]
+# action = "set"
+# selector = "space.long_press"
+# sound = "resources/028.wav"
+# interrupt = true
+#
+# [[rules]]
+# action = "set"
+# selector = "mouse:left.long_press"
+# sound = "resources/028.wav"
+#
+# [[rules]]
+# action = "add"
+# selector = ["space", "enter"]
+# sounds = ["resources/028.wav"]
+# rotation = "random"
+#
+# [[rules]]
+# action = "set"
+# selector = "mouse:left"
+# sounds = [{ directory = "resources", glob = "*.wav", regex = "cn_02[56]\\.wav$" }]
+#
+# [[rules]]
+# action = "clear"
+# selector = "escape"
+#
+# [[rules]]
+# action = "set"
+# selector = "gamepad:BTN_SOUTH"
+# sound = "resources/025.wav"
+#
+# [[rules]]
+# action = "set"
+# selector = "mouse:wheel_up"
+# sound = "resources/028.wav"

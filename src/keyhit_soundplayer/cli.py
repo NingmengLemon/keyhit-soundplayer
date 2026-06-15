@@ -56,9 +56,13 @@ class App:
         self._events: SimpleQueue[str] = SimpleQueue()
         self._stop_event = Event()
         self._keyboard = KeyboardListener(
-            self._enqueue, trigger_on_release=config.listener.trigger_on_release
+            self._enqueue,
+            trigger_on_release=config.listener.trigger_on_release,
+            long_press=config.listener.long_press,
         )
-        self._mouse = MouseListener(self._enqueue)
+        self._mouse = MouseListener(
+            self._enqueue, long_press=config.listener.long_press
+        )
         self._gamepad = GamepadListener(
             self._enqueue, retry_interval=config.listener.gamepad_poll_interval
         )
