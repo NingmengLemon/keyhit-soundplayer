@@ -1,0 +1,52 @@
+# KeyHit SoundPlayer 默认配置
+# 运行: uv run keyhit-soundplayer -c config.toml
+
+[audio]
+# pygame mixer 预初始化参数；buffer 越小延迟越低，但太小可能爆音。
+frequency = 44100
+size = -16
+channels = 2
+buffer = 128
+volume = 1.0
+
+[playback]
+# true: 后一个音效打断前一个未完成播放；false: 尽量叠放播放。
+interrupt = true
+channel_count = 8
+
+[listener]
+keyboard = true
+mouse = true
+gamepad = true
+# 无手柄或手柄暂时断开时的后台重试间隔，单位秒。
+gamepad_poll_interval = 1.0
+trigger_on_release = false
+
+# 简单全局映射：所有未单独配置的键都播放这个音效。
+[default]
+sound = "resources/cn_025.wav"
+interrupt = true
+
+# 按键组映射：适合把某类键一键绑定到同一个音效。
+[groups]
+"group:letters" = { sounds = ["resources/cn_025.wav", "resources/cn_026.wav"] }
+"group:digits" = "resources/cn_027.wav"
+"group:special" = "resources/cn_028.wav"
+"group:mouse_buttons" = "resources/cn_025.wav"
+# "group:mouse_wheel" = "resources/cn_026.wav"
+# "group:face" = "resources/cn_025.wav"
+# "group:dpad" = "resources/cn_026.wav"
+
+# 精确映射：会覆盖同名按键组映射。
+[bindings]
+# space = { sounds = [
+#     "resources/cn_025.wav",
+#     "resources/cn_026.wav",
+#     "resources/cn_027.wav",
+# ], interrupt = true }
+# enter = "resources/cn_028.wav"
+# "gamepad:BTN_SOUTH" = "resources/cn_025.wav"
+# "gamepad:ABS_HAT0X.-1" = "resources/cn_026.wav"
+# "mouse:left" = { sounds = ["resources/cn_025.wav", "resources/cn_026.wav"] }
+# "mouse:right" = "resources/cn_027.wav"
+# "mouse:wheel_up" = "resources/cn_028.wav"
