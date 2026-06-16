@@ -219,6 +219,16 @@ class SoundDirectorySource(ConfigModel):
             raise ValueError("目录音效源至少需要一个 glob 模式")
         return value
 
+    @field_validator("regex")
+    @classmethod
+    def validate_regex(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"无效的正则表达式: {value!r} ({exc})") from exc
+        return value
+
 
 class Binding(ConfigModel):
     sounds: tuple[Any, ...]

@@ -25,6 +25,7 @@ class LongPressTracker:
         self._config = config
         self._lock = Lock()
         self._states: dict[str, Timer | None] = {}
+        self._triggered: set[str] = set()
         logger.debug(
             "长按跟踪器已创建: enabled=%s threshold=%s interval=%s emit_press=%s suffix=%s",
             config.enabled,
@@ -37,6 +38,14 @@ class LongPressTracker:
     @property
     def enabled(self) -> bool:
         return self._config.enabled
+
+    @property
+    def emit_press(self) -> bool:
+        return self._config.emit_press
+
+    def was_long_pressed(self, event_name: str) -> bool:
+        with self._lock:
+            return event_name in self._triggered
 
     def press(self, event_name: str) -> None:
         if not self._config.enabled:
@@ -58,6 +67,7 @@ class LongPressTracker:
             return
         with self._lock:
             timer = self._states.pop(event_name, None)
+            self._triggered.discard(event_name)
         if timer is not None:
             timer.cancel()
             logger.debug("释放事件已取消长按计时: %s", event_name)
@@ -68,11 +78,14 @@ class LongPressTracker:
                 timer for timer in self._states.values() if timer is not None
             )
             self._states.clear()
+            self._triggered.clear()
         for timer in timers:
             timer.cancel()
 
     def _emit_long_press(self, event_name: str) -> None:
         long_press_event = f"{event_name}{self._config.event_suffix}"
+        with self._lock:
+            self._triggered.add(event_name)
         logger.debug("触发长按事件: %s", long_press_event)
         self._callback(long_press_event)
         if self._config.interval <= 0:
@@ -151,8 +164,11 @@ class KeyboardListener:
         name = key_to_name(key)
         if name:
             logger.debug("键盘释放事件: %s", name)
+            was_long = self._long_press.was_long_pressed(name)
             self._long_press.release(name)
             if self._trigger_on_release:
+                self._callback(name)
+            elif not self._long_press.emit_press and not was_long:
                 self._callback(name)
 
 
@@ -210,7 +226,10 @@ class MouseListener:
             if pressed:
                 self._long_press.press(name)
             else:
+                was_long = self._long_press.was_long_pressed(name)
                 self._long_press.release(name)
+                if not self._long_press.emit_press and not was_long:
+                    self._callback(name)
             return
         if pressed:
             self._callback(name)

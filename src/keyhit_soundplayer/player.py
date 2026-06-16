@@ -134,7 +134,19 @@ class SoundPlayer:
         return sound
 
     def _iter_bindings(self) -> list[Binding]:
-        bindings = list(self._config.bindings.values())
-        if self._config.default_binding is not None:
+        """返回去重后的绑定列表，用于预加载音效。
+
+        使用 id() 进行去重，因为 default_binding 通常就是 bindings["*"] 的同一对象实例，
+        只需预加载一次即可避免重复加载相同的音效文件。
+        """
+        bindings: list[Binding] = []
+        seen: set[int] = set()
+        for binding in self._config.bindings.values():
+            bindings.append(binding)
+            seen.add(id(binding))
+        if (
+            self._config.default_binding is not None
+            and id(self._config.default_binding) not in seen
+        ):
             bindings.append(self._config.default_binding)
         return bindings
