@@ -19,7 +19,6 @@ from .logging_config import get_logger
 
 logger = get_logger("config")
 
-InterruptMode = Literal["always", "never"]
 RotationMode = Literal["round_robin", "random"]
 BindingAction = Literal["set", "add", "clear", "remove"]
 
@@ -152,7 +151,7 @@ class AudioConfig(ConfigModel):
 
 
 class PlaybackConfig(ConfigModel):
-    interrupt: bool = True
+    max_simultaneous: int = Field(default=1, ge=1)
     channel_count: int = Field(default=8, ge=1)
     rotation: RotationMode = "round_robin"
 
@@ -232,7 +231,7 @@ class SoundDirectorySource(ConfigModel):
 
 class Binding(ConfigModel):
     sounds: tuple[Any, ...]
-    interrupt: bool | None = None
+    max_simultaneous: int | None = Field(default=None, ge=1)
     rotation: RotationMode | None = None
 
     @model_validator(mode="before")
@@ -287,7 +286,7 @@ class BindingRule(ConfigModel):
         if "binding" not in normalized:
             binding_keys = {
                 key: normalized[key]
-                for key in ("sound", "sounds", "interrupt", "rotation")
+                for key in ("sound", "sounds", "max_simultaneous", "rotation")
                 if key in normalized
             }
             if binding_keys:
@@ -422,9 +421,9 @@ def merge_bindings(existing: Binding, incoming: Binding) -> Binding:
     return existing.model_copy(
         update={
             "sounds": sounds,
-            "interrupt": existing.interrupt
-            if incoming.interrupt is None
-            else incoming.interrupt,
+            "max_simultaneous": existing.max_simultaneous
+            if incoming.max_simultaneous is None
+            else incoming.max_simultaneous,
             "rotation": existing.rotation
             if incoming.rotation is None
             else incoming.rotation,

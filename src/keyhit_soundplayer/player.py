@@ -21,7 +21,7 @@ class SoundPlayer:
         self._lock = Lock()
         self._round_robin: dict[str, int] = defaultdict(int)
         self._sounds: dict[Path, pygame.mixer.Sound] = {}
-        self._current_channel: pygame.mixer.Channel | None = None
+        self._active_channels: list[pygame.mixer.Channel] = []
         self._started = False
         logger.debug("音频播放器已创建")
 
@@ -66,6 +66,7 @@ class SoundPlayer:
                 return
             logger.info("停止音频播放器")
             pygame.mixer.stop()
+            self._active_channels.clear()
             pygame.mixer.quit()
             pygame.quit()
             self._started = False
@@ -90,21 +91,42 @@ class SoundPlayer:
             sound_path = self._choose_sound_path(event_name, binding)
             sound = self._load_sound(sound_path)
             sound.set_volume(self._config.audio.volume)
-            should_interrupt = (
-                self._config.playback.interrupt
-                if binding.interrupt is None
-                else binding.interrupt
+            max_simultaneous = (
+                self._config.playback.max_simultaneous
+                if binding.max_simultaneous is None
+                else binding.max_simultaneous
             )
-            if should_interrupt:
+            self._prune_active_channels()
+            while len(self._active_channels) >= max_simultaneous:
+                oldest_channel = self._active_channels.pop(0)
                 logger.debug(
-                    "打断当前音效并播放: event=%s sound=%s", event_name, sound_path
+                    "达到同时播放上限，停止最早音效: event=%s sound=%s max_simultaneous=%s",
+                    event_name,
+                    sound_path,
+                    max_simultaneous,
                 )
-                pygame.mixer.stop()
-                self._current_channel = pygame.mixer.find_channel(force=True)
-            else:
-                logger.debug("叠放播放音效: event=%s sound=%s", event_name, sound_path)
-                self._current_channel = pygame.mixer.find_channel(force=True)
-            self._current_channel.play(sound)
+                oldest_channel.stop()
+            logger.debug(
+                "播放音效: event=%s sound=%s active=%s max_simultaneous=%s",
+                event_name,
+                sound_path,
+                len(self._active_channels),
+                max_simultaneous,
+            )
+            channel = pygame.mixer.find_channel(force=True)
+            if channel.get_busy() and channel not in self._active_channels:
+                logger.debug(
+                    "pygame 复用未跟踪的忙碌声道: event=%s sound=%s",
+                    event_name,
+                    sound_path,
+                )
+            channel.play(sound)
+            self._active_channels.append(channel)
+
+    def _prune_active_channels(self) -> None:
+        self._active_channels = [
+            channel for channel in self._active_channels if channel.get_busy()
+        ]
 
     def _choose_sound_path(self, event_name: str, binding: Binding) -> Path:
         if len(binding.sounds) == 1:

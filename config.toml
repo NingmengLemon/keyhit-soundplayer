@@ -10,8 +10,8 @@ buffer = 128
 volume = 1.0
 
 [playback]
-# true: 后一个音效打断前一个未完成播放；false: 尽量叠放播放。
-interrupt = true
+# 允许最多同时播放的音效数量；更多新音效触发时会顶掉最早触发且未结束的音效。
+max_simultaneous = 1
 channel_count = 8
 # round_robin: 按顺序轮播；random: 每次随机挑选。
 rotation = "round_robin"
@@ -77,13 +77,13 @@ rotation = "random"
 #     "resources/026.wav",
 #     "resources/027.wav",
 # ]
-# interrupt = true
+# max_simultaneous = 2
 #
 # [[rules]]
 # action = "set"
 # selector = "space.long_press"
 # sound = "resources/028.wav"
-# interrupt = true
+# max_simultaneous = 1
 #
 # [[rules]]
 # action = "set"
